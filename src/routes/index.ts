@@ -1,53 +1,53 @@
 import express from 'express';
 import multer from 'multer';
-import AdmZip from 'adm-zip';
-import stream from 'stream';
-
-import { compose } from '../api';
+import { composeFile } from '../controllers/compose.controller';
+import { revertFile } from '../controllers/revert.controller';
+import { languages } from '../api/languages';
 
 const storage = multer.memoryStorage();
+
 const upload: multer.Instance = multer({
   storage,
   fileFilter: (req, file, cb) => {
-    cb(null, file.mimetype === 'application/zip');
+    const acceptedLanguages: string[] = [];
+    const values = Object.keys(languages);
+
+    Object.keys(languages).forEach(language => {
+      acceptedLanguages.push('application/' + languages[language].getName());
+      acceptedLanguages.push('application/x-' + languages[language].getName());
+      acceptedLanguages.push('text/' + languages[language].getName());
+    });
+
+    const acceptedMimeTypes: string[] = [
+      'application/x-zip-compressed',
+      'application/zip',
+      'text/plain',
+    ];
+    acceptedMimeTypes.push(...acceptedLanguages);
+    cb(null, acceptedMimeTypes.includes(file.mimetype));
   },
 });
 
+/**
+ * registers routes to the express application
+ * @param app  express application object, see src/index.ts
+ */
 export const register = (app: express.Application) => {
   app.get('/', (req, res) => {
-    res.render('index');
+    const langs = Object.keys(languages);
+    res.render('index', { list: langs });
+  });
+  app.get('/undo', (req, res) => {
+    const langs = Object.keys(languages);
+    res.render('undo', { list: langs });
+  });
+  app.post('/api/v1/revert', upload.single('file'), (req: any, res) => {
+    revertFile(req, res);
+  });
+  app.post('/api/v1/compose', upload.single('file'), (req: any, res) => {
+    composeFile(req, res);
   });
 
-  app.post('/combine', upload.single('file'), (req: any, res) => {
-    if (req.file !== undefined) {
-      const zip = new AdmZip(req.file.buffer);
-      const files = zip
-        .getEntries()
-        .filter(entry => !entry.isDirectory)
-        .reduce<{ [index: string]: string[] }>((acc, entry) => {
-          acc[entry.entryName] = entry
-            .getData()
-            .toString('utf-8')
-            .split('\n');
-          return acc;
-        }, {});
-
-      // TODO: Implement call to compose functionality.
-      const contents = Buffer.from(compose(files), 'utf-8');
-      const name = 'files.json';
-
-      // File Download from buffer
-      const reader = new stream.PassThrough();
-      reader.end(contents);
-
-      res.set('Content-disposition', 'attachment; filename=' + name);
-
-      // TODO: Content-Type should change based on lang.
-      res.set('Content-type', 'application/json');
-
-      reader.pipe(res);
-    } else {
-      res.json({ error: 'Zip files only.' });
-    }
-  });
+  app.use('/docs', express.static('dist/src/docs'));
+  app.use('/js', express.static('dist/src/public/js'));
 };
